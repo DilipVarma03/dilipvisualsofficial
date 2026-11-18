@@ -1,0 +1,484 @@
+// Prisma Schema for Dilip Visuals Full-Stack Creative Agency Platform
+// Supports SQLite for zero-config local development and PostgreSQL for production.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// 1. User Account
+model User {
+  id              String    @id @default(uuid())
+  email           String    @unique
+  name            String
+  googleId        String?   @unique
+  profileImage    String?
+  avatarUrl       String?   // Backward compatibility with legacy code
+  phone           String?
+  country         String?   @default("India")
+  role            String    @default("CLIENT") // OWNER, TEAM_MEMBER, CLIENT (or legacy: super_admin, admin, client)
+  isEmailVerified Boolean   @default(false)
+  isActive        Boolean   @default(true)
+  accountStatus   String    @default("active") // active, disabled
+  lastLoginAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  clientProfile    ClientProfile?
+  teamMember       TeamMember?
+  projects         Project[]          @relation("ClientProjects")
+  projectMembers   ProjectMember[]
+  projectUpdates   ProjectUpdate[]
+  quotations       Quotation[]
+  invoices         Invoice[]
+  filesUploaded    ProjectFile[]
+  revisionRequests RevisionRequest[]
+  notifications    Notification[]
+  messagesSent     Message[]
+  auditLogs        AuditLog[]
+
+  @@index([email])
+  @@index([googleId])
+  @@index([role])
+}
+
+// 2. Client Profile
+model ClientProfile {
+  id             String    @id @default(uuid())
+  userId         String    @unique
+  businessName   String?
+  website        String?
+  industry       String?
+  taxId          String?   // GSTIN or Tax ID
+  billingAddress String?
+  city           String?
+  state          String?
+  country        String?   @default("India")
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 3. Team Member Profile
+model TeamMember {
+  id                  String    @id @default(uuid())
+  userId              String    @unique
+  jobTitle            String
+  department          String    @default("Creative")
+  bio                 String?
+  skills              String?   // JSON array or comma separated
+  activeProjectsCount Int       @default(0)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// 4. Agency Service Catalog
+model Service {
+  id               String    @id @default(uuid())
+  slug             String    @unique
+  title            String
+  subtitle         String?
+  description      String
+  category         String    @default("creative")
+  startingPriceINR Float     @default(0)
+  startingPriceUSD Float     @default(0)
+  deliverables     String    // JSON array of deliverables
+  suitableFor      String    // JSON array of target clients
+  icon             String    @default("Palette")
+  isFeatured       Boolean   @default(true)
+  displayOrder     Int       @default(0)
+  active           Boolean   @default(true)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+// 5. Client Enquiry
+model Enquiry {
+  id               String    @id @default(uuid())
+  enquiryNumber    String    @unique // e.g. DV-ENQ-2026-001
+  name             String
+  email            String
+  phone            String
+  company          String?
+  country          String    @default("India")
+  service          String
+  package          String?
+  budgetRange      String?
+  expectedDeadline String?
+  description      String
+  preferredContact String    @default("whatsapp") // whatsapp, email, phone
+  status           String    @default("new") // new, in_discussion, quotation_sent, converted, archived
+  internalNotes    String?
+  assignedTeamId   String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+// 6. Project
+model Project {
+  id            String    @id @default(uuid())
+  projectNumber String    @unique // e.g. DV-PRJ-2026-001
+  clientId      String
+  title         String
+  serviceType   String
+  description   String
+  status        String    @default("Enquiry Received") 
+  // Statuses: Enquiry Received, Discussion, Quotation Sent, Awaiting Approval, 
+  // Confirmed, In Progress, Under Review, Revision Required, Completed, Delivered, Cancelled
+  progress      Int       @default(0) // 0 to 100 percentage
+  budget        Float?
+  currency      String    @default("INR")
+  startDate     DateTime?
+  deliveryDate  DateTime?
+  internalNotes String?
+  assignedTeam  String?   @default("Dilip (Creative Director)")
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  client           User              @relation("ClientProjects", fields: [clientId], references: [id], onDelete: Cascade)
+  members          ProjectMember[]
+  updates          ProjectUpdate[]
+  quotations       Quotation[]
+  invoices         Invoice[]
+  files            ProjectFile[]
+  revisionRequests RevisionRequest[]
+  messages         Message[]
+
+  @@index([clientId])
+  @@index([status])
+}
+
+// 7. Project Member Assignment
+model ProjectMember {
+  id            String   @id @default(uuid())
+  projectId     String
+  userId        String
+  roleInProject String   @default("Lead Editor")
+  assignedAt    DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+}
+
+// 8. Project Update Timeline
+model ProjectUpdate {
+  id               String   @id @default(uuid())
+  projectId        String
+  authorId         String
+  authorName       String
+  title            String
+  content          String
+  progressAtUpdate Int      @default(0)
+  isClientVisible  Boolean  @default(true)
+  createdAt        DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  author  User    @relation(fields: [authorId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+// 9. Quotation
+model Quotation {
+  id              String    @id @default(uuid())
+  quotationNumber String    @unique // e.g. DV-QT-2026-001
+  enquiryId       String?
+  projectId       String?
+  clientId        String
+  clientName      String
+  clientEmail     String
+  title           String
+  validUntil      DateTime?
+  subtotal        Float     @default(0)
+  discount        Float     @default(0)
+  gstRate         Float     @default(18) // 18% GST standard in India
+  gstAmount       Float     @default(0)
+  totalAmount     Float     @default(0)
+  currency        String    @default("INR")
+  terms           String?
+  notes           String?
+  status          String    @default("draft") // draft, sent, viewed, accepted, rejected, expired
+  acceptedAt      DateTime?
+  rejectedAt      DateTime?
+  rejectionReason String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  client  User            @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  project Project?        @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  items   QuotationItem[]
+
+  @@index([clientId])
+  @@index([status])
+}
+
+// 10. Quotation Line Item
+model QuotationItem {
+  id          String @id @default(uuid())
+  quotationId String
+  description String
+  quantity    Int    @default(1)
+  unitPrice   Float  @default(0)
+  amount      Float  @default(0)
+
+  quotation Quotation @relation(fields: [quotationId], references: [id], onDelete: Cascade)
+}
+
+// 11. Invoice
+model Invoice {
+  id            String    @id @default(uuid())
+  invoiceNumber String    @unique // e.g. DV-INV-2026-001
+  projectId     String?
+  quotationId   String?
+  clientId      String
+  clientName    String
+  clientEmail   String
+  issueDate     DateTime  @default(now())
+  dueDate       DateTime?
+  subtotal      Float     @default(0)
+  discount      Float     @default(0)
+  gstRate       Float     @default(18)
+  gstAmount     Float     @default(0)
+  totalAmount   Float     @default(0)
+  paidAmount    Float     @default(0)
+  balanceDue    Float     @default(0)
+  currency      String    @default("INR")
+  paymentTerms  String?   @default("Payment upon delivery or milestone approval")
+  status        String    @default("unpaid") // unpaid, partially_paid, paid, overdue
+  paidAt        DateTime?
+  notes         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  client   User          @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  project  Project?      @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  items    InvoiceItem[]
+  payments Payment[]
+
+  @@index([clientId])
+  @@index([status])
+}
+
+// 12. Invoice Line Item
+model InvoiceItem {
+  id          String @id @default(uuid())
+  invoiceId   String
+  description String
+  quantity    Int    @default(1)
+  unitPrice   Float  @default(0)
+  amount      Float  @default(0)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+// 13. Payment Record
+model Payment {
+  id             String    @id @default(uuid())
+  paymentNumber  String    @unique // e.g. DV-PAY-2026-001
+  invoiceId      String
+  clientId       String
+  amount         Float
+  currency       String    @default("INR")
+  paymentMethod  String    @default("UPI") // UPI, Bank Transfer, Razorpay, Stripe, Cash
+  transactionRef String?
+  status         String    @default("verified") // pending, verified, failed
+  verifiedBy     String?
+  verifiedAt     DateTime?
+  notes          String?
+  createdAt      DateTime  @default(now())
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+// 14. Project Files (Secure Uploads & Deliverables)
+model ProjectFile {
+  id              String   @id @default(uuid())
+  projectId       String
+  uploaderId      String
+  fileName        String
+  originalName    String
+  fileType        String   // image, video, document, archive
+  mimeType        String?
+  fileSize        String?  // formatted string e.g. "45.2 MB"
+  fileSizeBytes   Int?
+  fileUrl         String
+  storageProvider String   @default("LOCAL") // LOCAL, CLOUDINARY, S3
+  category        String   @default("FINAL_DELIVERABLE") // REFERENCE, WORK_IN_PROGRESS, FINAL_DELIVERABLE, REVISION_ATTACHMENT
+  accessLevel     String   @default("CLIENT_VISIBLE") // PRIVATE_ADMIN, CLIENT_VISIBLE, TEAM_VISIBLE
+  downloadCount   Int      @default(0)
+  createdAt       DateTime @default(now())
+
+  project  Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  uploader User    @relation(fields: [uploaderId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([category])
+}
+
+// 15. Revision Request
+model RevisionRequest {
+  id               String    @id @default(uuid())
+  projectId        String
+  clientId         String
+  title            String
+  description      String
+  timecodes        String?
+  priority         String    @default("normal") // normal, urgent
+  referenceFileUrl String?
+  status           String    @default("pending") // pending, in_progress, completed, rejected
+  adminResponse    String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  client  User    @relation(fields: [clientId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+  @@index([clientId])
+}
+
+// 16. In-App Notification Center
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String?  // Nullable for broadcast/admin-wide
+  title     String
+  message   String
+  type      String   @default("PROJECT") // PROJECT, QUOTATION, INVOICE, ENQUIRY, FILE, SYSTEM
+  read      Boolean  @default(false)
+  link      String?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([read])
+}
+
+// 17. Project Communication Message Thread
+model Message {
+  id             String   @id @default(uuid())
+  projectId      String
+  senderId       String
+  senderName     String
+  senderRole     String   @default("client")
+  content        String
+  attachmentUrl  String?
+  isInternalOnly Boolean  @default(false)
+  readByClient   Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  sender  User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
+
+  @@index([projectId])
+}
+
+// 18. Agency Portfolio Showcase
+model PortfolioItem {
+  id            String   @id @default(uuid())
+  title         String
+  slug          String   @unique
+  category      String   // Video Editing, Graphic Design, Thumbnails, Branding, 3D
+  clientName    String?
+  description   String
+  tags          String?  // JSON array
+  coverImageUrl String
+  mediaUrl      String?
+  mediaType     String   @default("IMAGE") // VIDEO, IMAGE, EMBED
+  featured      Boolean  @default(false)
+  isPublished   Boolean  @default(true)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// 19. Dynamic Pricing Packages
+model PricingPackage {
+  id               String   @id @default(uuid())
+  name             String   // Starter, Professional, Custom Solutions
+  category         String   // General, Video Editing, Branding
+  startingPriceINR Float
+  startingPriceUSD Float
+  billingCycle     String   @default("Per Project")
+  popular          Boolean  @default(false)
+  features         String   // JSON array of feature strings
+  description      String
+  ctaText          String   @default("Get Started")
+  active           Boolean  @default(true)
+  displayOrder     Int      @default(0)
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+}
+
+// 20. Agency Website Settings & CMS
+model WebsiteSettings {
+  id               String   @id @default("dv-global-settings")
+  agencyName       String   @default("DILIP VISUALS")
+  tagLine          String   @default("Let's create something extraordinary.")
+  heroTitle        String   @default("WE TURN IDEAS INTO EXTRAORDINARY VISUAL EXPERIENCES.")
+  heroSubtitle     String   @default("Creative thinking. Powerful visuals. Digital experiences that make your brand unforgettable.")
+  contactEmail     String   @default("contact@dilipvisuals.com")
+  contactPhone     String   @default("+91 9398769483")
+  whatsappNumber   String   @default("+91 9398769483")
+  locationAddress  String   @default("Hyderabad, Telangana, India")
+  gstNumber        String?  @default("36AAAAA0000A1Z5")
+  instagramUrl     String?  @default("https://instagram.com/dilipvisuals")
+  youtubeUrl       String?  @default("https://youtube.com/@dilipvisuals")
+  linkedinUrl      String?  @default("https://linkedin.com/company/dilipvisuals")
+  twitterUrl       String?  @default("https://x.com/dilipvisuals")
+  metaTitle        String   @default("DILIP VISUALS | Creative Digital Agency Hyderabad")
+  metaDescription  String   @default("Dilip Visuals is a premium creative agency based in Hyderabad, India specializing in high-end video editing, graphic design, branding, and digital visual experiences.")
+  announcementText String   @default("CREATIVE THINKING • POWERFUL VISUALS • EXTRAORDINARY RESULTS")
+  isMaintenanceMode Boolean @default(false)
+  updatedAt        DateTime @updatedAt
+}
+
+// 21. Audit Trail Logging
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  userName   String?
+  action     String
+  entityType String
+  entityId   String?
+  details    String?  // JSON string
+  ipAddress  String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([createdAt])
+  @@index([action])
+}
+
+// 22. Email Delivery Log
+model EmailLog {
+  id           String   @id @default(uuid())
+  to           String
+  from         String
+  subject      String
+  templateType String   // ENQUIRY_ADMIN, ENQUIRY_ACK_CLIENT, PROJECT_REQUEST, CLIENT_REGISTRATION, REVISION_REQUEST, FILE_UPLOAD, TEST_EMAIL
+  status       String   // SENT, FAILED
+  resendId     String?
+  errorMessage String?
+  metadata     String?  // JSON string
+  createdAt    DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([status])
+  @@index([templateType])
+}

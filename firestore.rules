@@ -1,0 +1,116 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'super_admin' ||
+        request.auth.token.role == 'admin' ||
+        getUserData().role == 'super_admin' ||
+        getUserData().role == 'admin'
+      );
+    }
+
+    function isProjectManager() {
+      return isAuthenticated() && (
+        request.auth.token.role == 'project_manager' ||
+        getUserData().role == 'project_manager'
+      );
+    }
+
+    function isClient() {
+      return isAuthenticated() && !isAdmin() && !isProjectManager();
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // USERS COLLECTION
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      // Only admins can assign or elevate roles!
+      allow create: if isAuthenticated() && (
+        request.resource.data.role == 'client' || isAdmin()
+      );
+      allow update: if (isOwner(userId) && request.resource.data.role == resource.data.role) || isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // ENQUIRIES COLLECTION
+    match /enquiries/{enquiryId} {
+      // Anyone can submit an enquiry from public contact/quote forms
+      allow create: if request.resource.data.name is string &&
+                       request.resource.data.email is string &&
+                       request.resource.data.phone is string &&
+                       request.resource.data.service is string;
+      // ONLY admins can view, update, convert, or archive enquiries!
+      allow read, update, delete: if isAdmin();
+    }
+
+    // PROJECTS COLLECTION
+    match /projects/{projectId} {
+      // Client can only read their own projects!
+      allow read: if isAdmin() || isProjectManager() || (isAuthenticated() && resource.data.clientId == request.auth.uid);
+      // Only admins or project managers can create/update projects
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || isProjectManager() || (
+        isAuthenticated() && resource.data.clientId == request.auth.uid &&
+        // Client can only update deliverables review status or add reference files
+        request.resource.data.diff(resource.data).affectedKeys().hasOnly(['deliverables', 'referenceFiles', 'updatedAt'])
+      );
+    }
+
+    // SERVICES COLLECTION (Public catalog)
+    match /services/{serviceId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // PRICING PACKAGES (Public catalog)
+    match /pricing/{packageId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // WEBSITE CONTENT (Announcement, founder info, etc.)
+    match /websiteContent/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // NOTIFICATIONS
+    match /notifications/{notifId} {
+      allow read: if isAuthenticated() && (
+        resource.data.userId == request.auth.uid ||
+        resource.data.userId == 'all_clients' ||
+        isAdmin()
+      );
+      allow update: if isAuthenticated() && resource.data.userId == request.auth.uid &&
+                    request.resource.data.diff(resource.data).affectedKeys().hasOnly(['read']);
+      allow create, delete: if isAdmin();
+    }
+
+    // PROJECT MESSAGING
+    match /projectMessages/{messageId} {
+      allow read, create: if isAuthenticated();
+      allow update, delete: if isAdmin();
+    }
+
+    // ACTIVITY LOGS (Owner audit trail)
+    match /activityLogs/{logId} {
+      allow read: if isAdmin();
+      allow create: if isAuthenticated();
+      allow update, delete: if false; // Immutable audit log
+    }
+  }
+}
